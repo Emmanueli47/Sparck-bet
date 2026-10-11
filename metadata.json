@@ -1,0 +1,8 @@
+{
+  "name": "SPARCK BET",
+  "description": "Create, track, and manage social sports bets with friends in one seamless, easy-to-use platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
