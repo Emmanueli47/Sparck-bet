@@ -693,4 +693,16 @@ class BettingRepository(
         userDao.insertOrUpdate(updatedAccount)
         return true
     }
+
+    suspend fun getUserAccountSync(): UserAccountEntity? = userDao.getUserAccountSync()
+
+    suspend fun updateUserAccountFromCloud(account: UserAccountEntity) {
+        userDao.insertOrUpdate(account)
+    }
+
+    suspend fun syncBetsFromCloud(bets: List<BetEntity>) {
+        betDao.insertAllBets(bets)
+    }
+
+    suspend fun getBetById(id: Long): BetEntity? = betDao.getBetById(id)
 }

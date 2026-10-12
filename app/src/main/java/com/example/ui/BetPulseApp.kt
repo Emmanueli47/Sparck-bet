@@ -47,9 +47,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.components.BetSlipDrawer
 import com.example.ui.components.MatchDetailDialog
 import com.example.ui.components.TopBarHeader
+import com.example.ui.components.UserProfileDialog
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.CreateWagerDialog
 import com.example.ui.screens.MyBetsScreen
+import com.example.ui.screens.SignInScreen
 import com.example.ui.screens.SportsbookScreen
 import com.example.ui.theme.BorderStroke
 import com.example.ui.theme.PulseAmber
@@ -66,6 +68,9 @@ fun BetPulseApp(
     viewModel: BettingViewModel,
     modifier: Modifier = Modifier
 ) {
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+    val isAuthenticating by viewModel.isAuthenticating.collectAsStateWithLifecycle()
+    val authError by viewModel.authError.collectAsStateWithLifecycle()
     val userAccount by viewModel.userAccount.collectAsStateWithLifecycle()
     val matches by viewModel.filteredMatches.collectAsStateWithLifecycle()
     val selectedSport by viewModel.selectedSport.collectAsStateWithLifecycle()
@@ -86,6 +91,7 @@ fun BetPulseApp(
 
     var currentTab by remember { mutableIntStateOf(0) }
     var showCreateWagerDialog by remember { mutableStateOf(false) }
+    var showUserProfileDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -95,6 +101,17 @@ fun BetPulseApp(
             snackbarHostState.showSnackbar(msg)
             viewModel.dismissMessage()
         }
+    }
+
+    // Auth Gate: unauthenticated users see the Google Sign-In Screen
+    if (currentUser == null) {
+        SignInScreen(
+            isLoading = isAuthenticating,
+            errorMessage = authError,
+            onSignInClick = { viewModel.signInWithGoogle() },
+            modifier = modifier.statusBarsPadding()
+        )
+        return
     }
 
     BackHandler(enabled = isSlipExpanded || currentTab != 0) {
@@ -113,7 +130,11 @@ fun BetPulseApp(
         topBar = {
             TopBarHeader(
                 balance = userAccount?.balance ?: 1000.00,
-                onClaimBonus = { viewModel.claimDailyBonus() }
+                onClaimBonus = { viewModel.claimDailyBonus() },
+                userDisplayName = currentUser?.displayName,
+                userPhotoUrl = currentUser?.photoUrl?.toString(),
+                onSignOut = { viewModel.signOut() },
+                onOpenProfile = { showUserProfileDialog = true }
             )
         },
         bottomBar = {
@@ -264,7 +285,9 @@ fun BetPulseApp(
                 )
                 2 -> AnalyticsScreen(
                     account = userAccount,
-                    onClaimDailyBonus = { viewModel.claimDailyBonus() }
+                    onClaimDailyBonus = { viewModel.claimDailyBonus() },
+                    user = currentUser,
+                    onOpenProfile = { showUserProfileDialog = true }
                 )
             }
 
@@ -286,6 +309,25 @@ fun BetPulseApp(
                     onCreate = { title, opponent, category, userPick, opponentPick, stake ->
                         viewModel.createFriendlyWager(title, opponent, category, userPick, opponentPick, stake)
                         showCreateWagerDialog = false
+                    }
+                )
+            }
+
+            // User Profile & Bet Management Dialog
+            if (showUserProfileDialog && currentUser != null) {
+                UserProfileDialog(
+                    user = currentUser!!,
+                    account = userAccount,
+                    activeBetsCount = activeBets.size,
+                    settledBetsCount = settledBets.size,
+                    onDismiss = { showUserProfileDialog = false },
+                    onNavigateToDashboard = {
+                        currentTab = 1
+                        showUserProfileDialog = false
+                    },
+                    onSignOut = {
+                        showUserProfileDialog = false
+                        viewModel.signOut()
                     }
                 )
             }

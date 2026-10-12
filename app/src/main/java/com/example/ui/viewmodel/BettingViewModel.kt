@@ -8,27 +8,132 @@ import com.example.data.db.BetEntity
 import com.example.data.db.FriendlyWagerEntity
 import com.example.data.db.UserAccountEntity
 import com.example.data.db.getDashboardStatusCategory
+import com.example.data.firebase.AuthManager
+import com.example.data.firebase.FirestoreBet
+import com.example.data.firebase.FirestoreBettingRepository
+import com.example.data.firebase.FirestoreFriendlyWager
+import com.example.data.firebase.FirestoreUserAccount
 import com.example.data.model.BetOption
 import com.example.data.model.DashboardStatusCategory
 import com.example.data.model.Match
 import com.example.data.model.SlipSelection
 import com.example.data.model.SportType
 import com.example.data.repository.BettingRepository
+import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class BettingViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val authManager = AuthManager(application)
+    val currentUser: StateFlow<FirebaseUser?> = authManager.currentUser
+    val isAuthenticating: StateFlow<Boolean> = authManager.isAuthenticating
+    val authError: StateFlow<String?> = authManager.errorMessage
+
+    private val firestoreRepo = FirestoreBettingRepository(application)
+
     private val repository = BettingRepository(
         database = AppDatabase.getDatabase(application),
         scope = viewModelScope
     )
+
+    init {
+        // Sync user state with Firestore whenever auth state updates
+        viewModelScope.launch {
+            currentUser.collect { user ->
+                if (user != null) {
+                    syncUserDataWithFirestore(user)
+                }
+            }
+        }
+    }
+
+    private fun syncUserDataWithFirestore(user: FirebaseUser) {
+        viewModelScope.launch {
+            firestoreRepo.observeUserAccount(user.uid).collect { cloudAcc ->
+                if (cloudAcc == null) {
+                    val local = repository.getUserAccountSync() ?: UserAccountEntity()
+                    firestoreRepo.saveUserAccount(
+                        FirestoreUserAccount(
+                            id = user.uid,
+                            displayName = user.displayName ?: "Bettor",
+                            email = user.email ?: "",
+                            photoUrl = user.photoUrl?.toString() ?: "",
+                            balance = local.balance,
+                            totalWagered = local.totalWagered,
+                            totalWon = local.totalWon,
+                            betsPlaced = local.betsPlaced,
+                            betsWon = local.betsWon,
+                            winStreak = local.winStreak,
+                            bestStreak = local.bestStreak,
+                            lastBonusClaim = local.lastBonusClaim
+                        )
+                    )
+                } else {
+                    repository.updateUserAccountFromCloud(
+                        UserAccountEntity(
+                            id = 1,
+                            balance = cloudAcc.balance,
+                            totalWagered = cloudAcc.totalWagered,
+                            totalWon = cloudAcc.totalWon,
+                            betsPlaced = cloudAcc.betsPlaced,
+                            betsWon = cloudAcc.betsWon,
+                            winStreak = cloudAcc.winStreak,
+                            bestStreak = cloudAcc.bestStreak,
+                            lastBonusClaim = cloudAcc.lastBonusClaim
+                        )
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            firestoreRepo.observeBets(user.uid).collect { cloudBets ->
+                if (cloudBets.isNotEmpty()) {
+                    val entities = cloudBets.map { fb ->
+                        BetEntity(
+                            id = fb.id.toLongOrNull() ?: System.currentTimeMillis(),
+                            betType = fb.betType,
+                            selectionsSummary = fb.selectionsSummary,
+                            selectionsDetailJson = fb.selectionsDetailJson,
+                            legsCount = fb.legsCount,
+                            stake = fb.stake,
+                            totalOdds = fb.totalOdds,
+                            potentialPayout = fb.potentialPayout,
+                            boostPercent = fb.boostPercent,
+                            status = fb.status,
+                            cashOutOffer = fb.cashOutOffer,
+                            placedAt = fb.placedAtTimestamp,
+                            settledAt = fb.settledAt,
+                            payoutReceived = fb.payoutReceived
+                        )
+                    }
+                    repository.syncBetsFromCloud(entities)
+                }
+            }
+        }
+    }
+
+    fun signInWithGoogle() {
+        viewModelScope.launch {
+            authManager.signInWithGoogle()
+        }
+    }
+
+    fun signOut() {
+        authManager.signOut()
+    }
+
+    fun clearAuthError() {
+        authManager.clearError()
+    }
 
     val userAccount: StateFlow<UserAccountEntity?> = repository.userAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -241,10 +346,56 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
                 stake = stake,
                 isParlay = _isParlayMode.value && selections.size > 1
             )
-            result.onSuccess {
+            result.onSuccess { betId ->
                 _uiMessage.value = "🎯 Bet placed successfully! Potential win: $${calculatePotentialPayout()}"
                 _betSlipSelections.value = emptyList()
                 _isSlipExpanded.value = false
+
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    val bet = repository.getBetById(betId)
+                    if (bet != null) {
+                        firestoreRepo.saveBet(
+                            uid,
+                            FirestoreBet(
+                                id = bet.id.toString(),
+                                userId = uid,
+                                betType = bet.betType,
+                                selectionsSummary = bet.selectionsSummary,
+                                selectionsDetailJson = bet.selectionsDetailJson,
+                                legsCount = bet.legsCount,
+                                stake = bet.stake,
+                                totalOdds = bet.totalOdds,
+                                potentialPayout = bet.potentialPayout,
+                                boostPercent = bet.boostPercent,
+                                status = bet.status,
+                                cashOutOffer = bet.cashOutOffer,
+                                placedAtTimestamp = bet.placedAt,
+                                settledAt = bet.settledAt,
+                                payoutReceived = bet.payoutReceived
+                            )
+                        )
+                    }
+                    val acc = repository.getUserAccountSync()
+                    if (acc != null) {
+                        firestoreRepo.saveUserAccount(
+                            FirestoreUserAccount(
+                                id = uid,
+                                displayName = currentUser.value?.displayName ?: "Bettor",
+                                email = currentUser.value?.email ?: "",
+                                photoUrl = currentUser.value?.photoUrl?.toString() ?: "",
+                                balance = acc.balance,
+                                totalWagered = acc.totalWagered,
+                                totalWon = acc.totalWon,
+                                betsPlaced = acc.betsPlaced,
+                                betsWon = acc.betsWon,
+                                winStreak = acc.winStreak,
+                                bestStreak = acc.bestStreak,
+                                lastBonusClaim = acc.lastBonusClaim
+                            )
+                        )
+                    }
+                }
             }.onFailure { err ->
                 _uiMessage.value = err.message ?: "Failed to place bet"
             }
@@ -256,9 +407,57 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             val success = repository.cashOutBet(betId)
             if (success) {
                 _uiMessage.value = "💰 Bet successfully cashed out! Funds added to your bankroll."
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    val bet = repository.getBetById(betId)
+                    if (bet != null) {
+                        firestoreRepo.updateBetStatus(uid, betId.toString(), "CASHED_OUT", bet.payoutReceived, bet.settledAt)
+                    }
+                    val acc = repository.getUserAccountSync()
+                    if (acc != null) {
+                        firestoreRepo.saveUserAccount(
+                            FirestoreUserAccount(
+                                id = uid,
+                                displayName = currentUser.value?.displayName ?: "Bettor",
+                                email = currentUser.value?.email ?: "",
+                                photoUrl = currentUser.value?.photoUrl?.toString() ?: "",
+                                balance = acc.balance,
+                                totalWagered = acc.totalWagered,
+                                totalWon = acc.totalWon,
+                                betsPlaced = acc.betsPlaced,
+                                betsWon = acc.betsWon,
+                                winStreak = acc.winStreak,
+                                bestStreak = acc.bestStreak,
+                                lastBonusClaim = acc.lastBonusClaim
+                            )
+                        )
+                    }
+                }
             } else {
                 _uiMessage.value = "Could not cash out this bet."
             }
+        }
+    }
+
+    private fun syncUserAccountToFirestore(uid: String) {
+        viewModelScope.launch {
+            val acc = repository.getUserAccountSync() ?: return@launch
+            firestoreRepo.saveUserAccount(
+                FirestoreUserAccount(
+                    id = uid,
+                    displayName = currentUser.value?.displayName ?: "Bettor",
+                    email = currentUser.value?.email ?: "",
+                    photoUrl = currentUser.value?.photoUrl?.toString() ?: "",
+                    balance = acc.balance,
+                    totalWagered = acc.totalWagered,
+                    totalWon = acc.totalWon,
+                    betsPlaced = acc.betsPlaced,
+                    betsWon = acc.betsWon,
+                    winStreak = acc.winStreak,
+                    bestStreak = acc.bestStreak,
+                    lastBonusClaim = acc.lastBonusClaim
+                )
+            )
         }
     }
 
@@ -267,6 +466,14 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             val count = repository.simulateAndSettleAllMatches()
             if (count > 0) {
                 _uiMessage.value = "🏁 Simulated $count active match result(s)! Check settled bets."
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    val settled = repository.settledBets.firstOrNull() ?: emptyList()
+                    for (b in settled) {
+                        firestoreRepo.updateBetStatus(uid, b.id.toString(), b.status, b.payoutReceived, b.settledAt)
+                    }
+                    syncUserAccountToFirestore(uid)
+                }
             } else {
                 _uiMessage.value = "No active bets to settle right now."
             }
@@ -277,6 +484,10 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.claimFreeDailyBonus()
             _uiMessage.value = "🎁 Claimed $500.00 free bonus bankroll reload!"
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                syncUserAccountToFirestore(uid)
+            }
         }
     }
 
@@ -294,8 +505,27 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         viewModelScope.launch {
-            repository.addFriendlyWager(title, opponent, category, userPick, opponentPick, stake)
+            val wagerId = repository.addFriendlyWager(title, opponent, category, userPick, opponentPick, stake)
             _uiMessage.value = "🤝 Friendly wager with $opponent created!"
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                syncUserAccountToFirestore(uid)
+                firestoreRepo.saveFriendlyWager(
+                    FirestoreFriendlyWager(
+                        id = wagerId.toString(),
+                        creatorId = uid,
+                        title = title,
+                        opponent = opponent,
+                        category = category,
+                        userPick = userPick,
+                        opponentPick = opponentPick,
+                        stake = stake,
+                        potentialReward = stake * 2.0,
+                        status = "PENDING",
+                        createdAtTimestamp = System.currentTimeMillis()
+                    )
+                )
+            }
         }
     }
 
@@ -304,6 +534,15 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             repository.resolveFriendlyWager(wager, userWon)
             val outcome = if (userWon) "WON! +$${wager.potentialReward}" else "LOST"
             _uiMessage.value = "Wager resolved as $outcome"
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                syncUserAccountToFirestore(uid)
+                firestoreRepo.resolveFriendlyWager(
+                    wagerId = wager.id.toString(),
+                    newStatus = if (userWon) "WON" else "LOST",
+                    settledAt = System.currentTimeMillis()
+                )
+            }
         }
     }
 
@@ -320,6 +559,13 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             val count = repository.kickoffPendingMatchesAndBets()
             if (count > 0) {
                 _uiMessage.value = "🚀 $count pending bet(s) are now LIVE in-play!"
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    val active = repository.activeBets.firstOrNull() ?: emptyList()
+                    for (b in active) {
+                        firestoreRepo.updateBetStatus(uid, b.id.toString(), b.status, b.payoutReceived, b.settledAt)
+                    }
+                }
             } else {
                 _uiMessage.value = "All matches already in-play or no pending bets."
             }
@@ -332,6 +578,14 @@ class BettingViewModel(application: Application) : AndroidViewModel(application)
             if (success) {
                 val outcome = if (won) "WON! Bankroll updated 🎯" else "Settled as Lost."
                 _uiMessage.value = "Bet #$betId resolved as $outcome"
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    val bet = repository.getBetById(betId)
+                    if (bet != null) {
+                        firestoreRepo.updateBetStatus(uid, betId.toString(), bet.status, bet.payoutReceived, bet.settledAt)
+                    }
+                    syncUserAccountToFirestore(uid)
+                }
             }
         }
     }

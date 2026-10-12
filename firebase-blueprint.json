@@ -1,0 +1,219 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "User bankroll account and betting statistics.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user."
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Avatar URL of the user."
+        },
+        "balance": {
+          "type": "number",
+          "description": "Current virtual bankroll balance."
+        },
+        "totalWagered": {
+          "type": "number",
+          "description": "Total amount wagered across all bets."
+        },
+        "totalWon": {
+          "type": "number",
+          "description": "Total payout won across all bets."
+        },
+        "betsPlaced": {
+          "type": "number",
+          "description": "Total number of bets placed."
+        },
+        "betsWon": {
+          "type": "number",
+          "description": "Total number of bets won."
+        },
+        "winStreak": {
+          "type": "number",
+          "description": "Current win streak."
+        },
+        "bestStreak": {
+          "type": "number",
+          "description": "All-time best win streak."
+        },
+        "lastBonusClaim": {
+          "type": "number",
+          "description": "Timestamp in ms of the last daily reload claim."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account update timestamp."
+        }
+      },
+      "required": ["id", "balance", "totalWagered", "totalWon", "betsPlaced", "betsWon"]
+    },
+    "Bet": {
+      "title": "Bet",
+      "description": "A sportsbook single or parlay bet placed by a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique ID of the bet."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "betType": {
+          "type": "string",
+          "enum": ["SINGLE", "PARLAY"],
+          "description": "Type of bet: SINGLE or PARLAY."
+        },
+        "selectionsSummary": {
+          "type": "string",
+          "description": "Human-readable summary of picks."
+        },
+        "selectionsDetailJson": {
+          "type": "string",
+          "description": "Structured details of match legs."
+        },
+        "legsCount": {
+          "type": "number",
+          "description": "Number of legs."
+        },
+        "stake": {
+          "type": "number",
+          "description": "Amount staked."
+        },
+        "totalOdds": {
+          "type": "number",
+          "description": "Total odds multiplier."
+        },
+        "potentialPayout": {
+          "type": "number",
+          "description": "Potential payout amount."
+        },
+        "boostPercent": {
+          "type": "number",
+          "description": "Parlay boost percentage."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "ACTIVE", "WON", "LOST", "CASHED_OUT", "RESOLVED"],
+          "description": "Status of the bet."
+        },
+        "cashOutOffer": {
+          "type": "number",
+          "description": "Dynamic cash-out offer amount."
+        },
+        "placedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the bet was placed."
+        },
+        "settledAt": {
+          "type": "number",
+          "description": "Timestamp when the bet was settled (0 if active/pending)."
+        },
+        "payoutReceived": {
+          "type": "number",
+          "description": "Actual payout received upon settlement."
+        }
+      },
+      "required": ["id", "userId", "betType", "selectionsSummary", "stake", "totalOdds", "potentialPayout", "status"]
+    },
+    "FriendlyWager": {
+      "title": "FriendlyWager",
+      "description": "A friendly wager between friends.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique ID of the wager."
+        },
+        "creatorId": {
+          "type": "string",
+          "description": "UID of the creator."
+        },
+        "title": {
+          "type": "string",
+          "description": "Wager title/matchup."
+        },
+        "opponent": {
+          "type": "string",
+          "description": "Opponent display name."
+        },
+        "category": {
+          "type": "string",
+          "description": "Category/sport."
+        },
+        "userPick": {
+          "type": "string",
+          "description": "User's pick."
+        },
+        "opponentPick": {
+          "type": "string",
+          "description": "Opponent's pick."
+        },
+        "stake": {
+          "type": "number",
+          "description": "Stake amount."
+        },
+        "potentialReward": {
+          "type": "number",
+          "description": "Potential reward amount."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "ACTIVE", "WON", "LOST", "RESOLVED"],
+          "description": "Wager status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "settledAt": {
+          "type": "number",
+          "description": "Settled timestamp (0 if pending)."
+        }
+      },
+      "required": ["id", "creatorId", "title", "opponent", "userPick", "opponentPick", "stake", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserAccount"
+      },
+      "description": "User profile and bankroll account."
+    },
+    "/users/{userId}/bets/{betId}": {
+      "schema": {
+        "$ref": "#/entities/Bet"
+      },
+      "description": "Bets placed by a specific user."
+    },
+    "/friendly_wagers/{wagerId}": {
+      "schema": {
+        "$ref": "#/entities/FriendlyWager"
+      },
+      "description": "Social friendly wagers created by users."
+    }
+  }
+}

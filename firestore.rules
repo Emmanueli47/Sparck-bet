@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['id', 'balance', 'totalWagered', 'totalWon', 'betsPlaced', 'betsWon']) &&
+        data.id is string &&
+        data.id == request.auth.uid &&
+        data.balance is number && data.balance >= 0 &&
+        data.totalWagered is number && data.totalWagered >= 0 &&
+        data.totalWon is number && data.totalWon >= 0 &&
+        data.betsPlaced is int && data.betsPlaced >= 0 &&
+        data.betsWon is int && data.betsWon >= 0;
+    }
+
+    function isValidBet(data) {
+      return data.keys().hasAll(['id', 'userId', 'betType', 'selectionsSummary', 'stake', 'totalOdds', 'potentialPayout', 'status']) &&
+        data.id is string &&
+        data.userId is string &&
+        data.userId == request.auth.uid &&
+        data.betType in ['SINGLE', 'PARLAY'] &&
+        data.selectionsSummary is string &&
+        data.stake is number && data.stake > 0 &&
+        data.totalOdds is number && data.totalOdds >= 1.0 &&
+        data.potentialPayout is number && data.potentialPayout >= 0 &&
+        data.status in ['PENDING', 'ACTIVE', 'WON', 'LOST', 'CASHED_OUT', 'RESOLVED'];
+    }
+
+    function isValidFriendlyWager(data) {
+      return data.keys().hasAll(['id', 'creatorId', 'title', 'opponent', 'userPick', 'opponentPick', 'stake', 'status']) &&
+        data.id is string &&
+        data.creatorId is string &&
+        data.creatorId == request.auth.uid &&
+        data.title is string &&
+        data.opponent is string &&
+        data.userPick is string &&
+        data.opponentPick is string &&
+        data.stake is number && data.stake > 0 &&
+        data.status in ['PENDING', 'ACTIVE', 'WON', 'LOST', 'RESOLVED'];
+    }
+
+    // User accounts
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserAccount(request.resource.data);
+      allow update: if isOwner(userId) && isValidUserAccount(request.resource.data);
+      allow delete: if false;
+
+      // User's personal bets
+      match /bets/{betId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidBet(request.resource.data);
+        allow update: if isOwner(userId) && isValidBet(request.resource.data);
+        allow delete: if false;
+      }
+    }
+
+    // Friendly wagers
+    match /friendly_wagers/{wagerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidFriendlyWager(request.resource.data);
+      allow update: if isAuthenticated() && (
+        resource.data.creatorId == request.auth.uid
+      ) && isValidFriendlyWager(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+    }
+  }
+}
